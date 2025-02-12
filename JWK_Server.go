@@ -17,6 +17,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+const keyExpirationDuration = 10 * time.Minute
+const tokenExpirationDuration = 5 * time.Minute
+
 type JWK struct {
 	Kty string `json:"kty"`
 	Kid string `json:"kid"`
@@ -55,7 +58,7 @@ func generateKeyPair() (Key, error) {
 	return Key{
 		PrivateKey: privateKey,
 		Kid:        kid,
-		Expiry:     time.Now().Add(10 * time.Minute),
+		Expiry:     time.Now().Add(keyExpirationDuration),
 	}, nil
 }
 
@@ -99,10 +102,15 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	expired := r.URL.Query().Get("expired") == "true"
+
 	keyStore.RLock()
 	var signingKey Key
 	for _, key := range keyStore.keys {
-		if key.Expiry.After(time.Now()) {
+		if expired && key.Expiry.Before(time.Now()) {
+			signingKey = key
+			break
+		} else if !expired && key.Expiry.After(time.Now()) {
 			signingKey = key
 			break
 		}
@@ -114,23 +122,15 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expired := r.URL.Query().Get("expired") == "true"
+	expiryTime := time.Now().Add(tokenExpirationDuration)
 	if expired {
-		for _, key := range keyStore.keys {
-			if key.Expiry.Before(time.Now()) {
-				signingKey = key
-				break
-			}
-		}
-	}
-
-	expiryTime := time.Now().Add(5 * time.Minute)
-	if expired {
-		expiryTime = time.Now().Add(-5 * time.Minute)
+		expiryTime = time.Now().Add(-tokenExpirationDuration)
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 		"sub": "user123",
+		"iat": time.Now().Unix(),
+		"nbf": time.Now().Unix(),
 		"exp": expiryTime.Unix(),
 	})
 	token.Header["kid"] = signingKey.Kid
