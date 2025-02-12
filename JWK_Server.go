@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"log"
 	"math/big"
 	"net/http"
@@ -17,8 +16,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const keyExpirationDuration = 10 * time.Minute
-const tokenExpirationDuration = 5 * time.Minute
+const (
+	keyExpirationDuration   = 10 * time.Minute
+	tokenExpirationDuration = 5 * time.Minute
+)
 
 type JWK struct {
 	Kty string `json:"kty"`
@@ -124,7 +125,7 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 
 	expiryTime := time.Now().Add(tokenExpirationDuration)
 	if expired {
-		expiryTime = time.Now().Add(-tokenExpirationDuration)
+		expiryTime = time.Now().Add(-tokenExpirationDuration) // Make it past expiration
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
