@@ -18,127 +18,132 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const (
-	keyExpirationDuration   = 10 * time.Minute
-	tokenExpirationDuration = 5 * time.Minute
-)
+var db *sql.DB
+
+func main() {
+	initializeDatabase()
+	genKeys()
+	http.HandleFunc("/.well-known/jwks.json", JWKSHandler)
+	http.HandleFunc("/auth", AuthHandler)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func initializeDatabase() {
+	var err error
+	db, err = sql.Open("sqlite3", "totally_not_my_privateKeys.db")
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS keys (
+		kid INTEGER PRIMARY KEY AUTOINCREMENT,
+		key BLOB NOT NULL,
+		exp INTEGER NOT NULL
+	)`) 
+	if err != nil {
+		log.Fatalf("Failed to create keys table: %v", err)
+	}
+}
+
+func storeKey(privateKey *rsa.PrivateKey, expiry time.Time) (int64, error) {
+	privKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	result, err := db.Exec(`INSERT INTO keys (key, exp) VALUES (?, ?)`, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: privKeyBytes}), expiry.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func genKeys() {
+	goodPrivKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	expiredPrivKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	
+	storeKey(goodPrivKey, time.Now().Add(1*time.Hour))     // Store good key
+	storeKey(expiredPrivKey, time.Now().Add(-1*time.Hour))  // Store expired key
+}
 
 type JWK struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	N   string `json:"n"`
-	E   string `json:"e"`
+	KID       string `json:"kid"`
+	Algorithm string `json:"alg"`
+	KeyType   string `json:"kty"`
+	Use       string `json:"use"`
+	N         string `json:"n"`
+	E         string `json:"e"`
 }
 
 type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
-type Key struct {
-	PrivateKey *rsa.PrivateKey
-	Kid        string
-	Expiry     time.Time
-}
-
-var (
-	keyStore = struct {
-		sync.RWMutex
-		keys map[string]Key
-	}{keys: make(map[string]Key)}
-)
-
-func generateKeyPair() (Key, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+func JWKSHandler(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT kid, key FROM keys WHERE exp > ?`, time.Now().Unix())
 	if err != nil {
-		return Key{}, err
-	}
-
-	kid, err := generateKid()
-	if err != nil {
-		return Key{}, err
-	}
-
-	return Key{
-		PrivateKey: privateKey,
-		Kid:        kid,
-		Expiry:     time.Now().Add(keyExpirationDuration),
-	}, nil
-}
-
-func generateKid() (string, error) {
-	bigInt, err := rand.Int(rand.Reader, big.NewInt(1<<62))
-	if err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(bigInt.Bytes()), nil
-}
-
-func getJWKS(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Failed to fetch keys", http.StatusInternalServerError)
 		return
 	}
+	defer rows.Close()
 
-	keyStore.RLock()
-	defer keyStore.RUnlock()
+	var keys []JWK
 
-	jwks := JWKS{}
-	for _, key := range keyStore.keys {
-		if key.Expiry.After(time.Now()) {
-			publicKey := key.PrivateKey.Public().(*rsa.PublicKey)
-			jwks.Keys = append(jwks.Keys, JWK{
-				Kty: "RSA",
-				Kid: key.Kid,
-				N:   base64.URLEncoding.EncodeToString(publicKey.N.Bytes()),
-				E:   base64.URLEncoding.EncodeToString(big.NewInt(int64(publicKey.E)).Bytes()),
-			})
+	for rows.Next() {
+		var kid int64
+		var privKeyBytes []byte
+		err := rows.Scan(&kid, &privKeyBytes)
+		if err != nil {
+			continue
 		}
+
+		block, _ := pem.Decode(privKeyBytes)
+		privateKey, _ := x509.ParsePKCS1PrivateKey(block.Bytes)
+		pubKey := privateKey.Public().(*rsa.PublicKey)
+
+		jwk := JWK{
+			KID:       strconv.FormatInt(kid, 10),
+			Algorithm: "RS256",
+			KeyType:   "RSA",
+			Use:       "sig",
+			N:         base64.RawURLEncoding.EncodeToString(pubKey.N.Bytes()),
+			E:         base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pubKey.E)).Bytes()),
+		}
+		keys = append(keys, jwk)
 	}
 
+	resp := JWKS{Keys: keys}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(jwks)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func authHandler(w http.ResponseWriter, r *http.Request) {
+func AuthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	rateLimit[clientIP] = time.Now()
 
 	expired := r.URL.Query().Get("expired") == "true"
-
-	keyStore.RLock()
-	var signingKey Key
-	for _, key := range keyStore.keys {
-		if expired && key.Expiry.Before(time.Now()) {
-			signingKey = key
-			break
-		} else if !expired && key.Expiry.After(time.Now()) {
-			signingKey = key
-			break
-		}
+	query := `SELECT kid, key FROM keys WHERE exp > ? LIMIT 1`
+	if expired {
+		query = `SELECT kid, key FROM keys WHERE exp <= ? LIMIT 1`
 	}
-	keyStore.RUnlock()
 
-	if signingKey.PrivateKey == nil {
-		http.Error(w, "No valid signing key", http.StatusInternalServerError)
+	row := db.QueryRow(query, time.Now().Unix())
+
+	var kid int64
+	var privKeyBytes []byte
+	if err := row.Scan(&kid, &privKeyBytes); err != nil {
+		http.Error(w, "No valid keys found", http.StatusInternalServerError)
 		return
 	}
 
-	expiryTime := time.Now().Add(tokenExpirationDuration)
-	if expired {
-		expiryTime = time.Now().Add(-tokenExpirationDuration) // Make it past expiration
-	}
+	block, _ := pem.Decode(privKeyBytes)
+	privateKey, _ := x509.ParsePKCS1PrivateKey(block.Bytes)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"sub": "user123",
-		"iat": time.Now().Unix(),
-		"nbf": time.Now().Unix(),
-		"exp": expiryTime.Unix(),
+		"sub": "user",
+		"exp": time.Now().Add(time.Hour).Unix(),
 	})
-	token.Header["kid"] = signingKey.Kid
-	signedToken, err := token.SignedString(signingKey.PrivateKey)
+	token.Header["kid"] = strconv.FormatInt(kid, 10)
+
+	signedToken, err := token.SignedString(privateKey)
 	if err != nil {
 		http.Error(w, "Failed to sign token", http.StatusInternalServerError)
 		return
@@ -146,36 +151,5 @@ func authHandler(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{"token": signedToken}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": signedToken})
-}
-
-func keyRotation() {
-	for {
-		time.Sleep(5 * time.Minute)
-		key, err := generateKeyPair()
-		if err != nil {
-			log.Println("Key generation failed:", err)
-			continue
-		}
-
-		keyStore.Lock()
-		keyStore.keys[key.Kid] = key
-		keyStore.Unlock()
-	}
-}
-
-func main() {
-	key, err := generateKeyPair()
-	if err != nil {
-		log.Fatal("Failed to generate initial key:", err)
-	}
-
-	keyStore.keys[key.Kid] = key
-	go keyRotation()
-
-	http.HandleFunc("/.well-known/jwks.json", getJWKS)
-	http.HandleFunc("/auth", authHandler)
-
-	log.Println("JWKS Server running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	json.NewEncoder(w).Encode(response)
 }
