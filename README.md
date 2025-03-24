@@ -11,7 +11,25 @@ Features
 - **Key Management:** Automatically generates a valid key and an expired key on startup.
 
 ---
-How to Run 
+How to Run  
+
+How To Install Go (If Not Already Installed)
+
+Download and Install Go:
+
+Visit Go Downloads
+
+Download the latest stable version.
+
+Follow the installation instructions for your OS (Windows, Mac, Linux).
+
+Verify Installation:
+
+ go version
+
+Should output something like:  
+
+go version go1.20.5 linux/amd64
 
 CLONE THE REPO
  git clone https://github.com/YourUsername/YourRepository.git
