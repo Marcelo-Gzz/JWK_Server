@@ -1,54 +1,28 @@
-JWKS Server Project
+# JWKS Server Project
 
-Overview
-This project implements a RESTful JSON Web Key Set (JWKS) server using SQLite for key storage. The server is capable of generating JWTs, serving public keys via JWKS, and handling requests for expired keys.
+## 📋 Overview
+This project is a JWKS (JSON Web Key Set) server implemented in Go.  
+It features AES-256 encryption of RSA private keys, user registration with Argon2 password hashing, JWT issuance, and authentication request logging into SQLite.
 
-Features
-- **SQLite Integration:** Private keys are stored persistently in a database file (`totally_not_my_privateKeys.db`).
-- **Endpoints:**
-  - `POST /auth`: Generates a signed JWT using a valid or expired key.
-  - `GET /.well-known/jwks.json`: Serves public keys from the database.
-- **Key Management:** Automatically generates a valid key and an expired key on startup.
+## 📦 Features
+- 🔒 AES-256 encryption for private keys.
+- 🔐 JWT tokens signed with RSA keys.
+- 🧑‍💻 User registration with UUID password generation and Argon2 hashing.
+- 📜 Logs successful authentication attempts with IP address and user ID.
+- ⚡ Supports issuing expired JWTs for testing.
 
----
-How to Run  
+## 🛠️ Technology Stack
+- Go 1.20+
+- SQLite3
+- JWT (github.com/golang-jwt/jwt/v5)
+- UUID generation (github.com/google/uuid)
+- Argon2 hashing (golang.org/x/crypto/argon2)
 
-How To Install Go (If Not Already Installed)
+## 🚀 Running the Server
 
-Download and Install Go:
-
-Visit Go Downloads
-
-Download the latest stable version.
-
-Follow the installation instructions for your OS (Windows, Mac, Linux).
-
-Verify Installation:
-
- go version
-
-Should output something like:  
-
-go version go1.20.5 linux/amd64
-
-CLONE THE REPO
- git clone https://github.com/YourUsername/YourRepository.git
- cd YourRepository  
-
- INSTALL DEPENDANCIES 
-  git clone https://github.com/YourUsername/YourRepository.git
- cd YourRepository
-
-RUN THE SERVER IN THE BACKGROUND
-go run JWK_Server.go & 
-
-RUN GRADEBOT 
-./gradebot project2 --port 8080 --debug
-
-STOP SERVER 
-ps -aux | grep JWK_Server
-kill -9 <PID>
-
+1. Install dependencies:
+```bash
+go mod tidy
 
 
  
