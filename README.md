@@ -31,3 +31,24 @@ It features AES encryption for private keys, JWT issuance, user registration wit
 git clone https://github.com/yourusername/your-repo-name.git
 cd your-repo-name
 
+---
+
+## 🤖 AI Usage Acknowledgement
+
+I used OpenAI's ChatGPT to assist with specific parts of this project.  
+Mainly, I used it to:
+- Help troubleshoot specific Go errors (such as AES encryption and JWT signing issues).
+- Suggest ways to organize my code more cleanly.
+- Provide examples for writing a README and small unit tests.
+
+The majority of the code and debugging was done manually.  
+General prompts used included:
+- "How to encrypt with AES in Go"
+- "Example of a simple JWT creation in Go"
+- "How to run go test with coverage"
+
+All AI suggestions were verified, tested, and adapted to meet the assignment requirements.
+
+---
+
+
